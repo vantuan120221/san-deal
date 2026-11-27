@@ -63,24 +63,41 @@ jobs:
           step ./gradlew app:buildTemplateApp --stacktrace
           cp app/src/main/assets/template.apk ../template.apk
 
+      # lưu template ngay khi build xong (kể cả bước sau lỗi) để lần sau khỏi build lại
+      - name: Lưu cache template
+        if: steps.tpl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: template.apk
+          key: autox-template-${{ env.AUTOX_TAG }}
+
       - name: Ghép Săn Deal + ký
         env:
           KS_B64: ${{ secrets.SANDEAL_KEYSTORE_B64 }}
           KS_PASS: ${{ secrets.SANDEAL_KEYSTORE_PASS }}
         run: |
-          test -n "$KS_B64" || { echo "Thiếu secret SANDEAL_KEYSTORE_B64"; exit 1; }
-          curl -sL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar"
-          err() { msg=$(tail -60 "$1" | python3 -c 'import sys;print(sys.stdin.read()[-3500:].replace("%","%25").replace("\r","").replace("\n","%0A"))'); echo "::error title=$2::$msg"; exit 1; }
-          java -jar apktool.jar d -s -f template.apk -o work > a.log 2>&1 || err a.log "apktool d"
-          python3 build/patch.py work > p.log 2>&1 || err p.log "patch"
-          cat p.log
-          java -jar apktool.jar b work -o unsigned.apk > b.log 2>&1 || err b.log "apktool b"
-          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
-          echo "$KS_B64" | base64 -d > ks.p12
-          "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-pass env:KS_PASS --ks-key-alias sandeal --out SanDeal.apk aligned.apk
-          rm ks.p12
-          "$BT/apksigner" verify --print-certs SanDeal.apk
+          # mọi lệnh lỗi đều đẩy log ra annotation (xem được không cần đăng nhập)
+          step() {
+            echo "== $1"; local t="$1"; shift
+            if ! "$@" > s.log 2>&1; then
+              cat s.log
+              msg=$(tail -60 s.log | python3 -c 'import sys;print(sys.stdin.read()[-3500:].replace("%","%25").replace("\r","").replace("\n","%0A"))')
+              echo "::error title=$t::$msg"; exit 1
+            fi
+            tail -5 s.log
+          }
+          [ -n "$KS_B64" ] || { echo "::error title=secret::Thiếu secret SANDEAL_KEYSTORE_B64"; exit 1; }
+          [ -n "$KS_PASS" ] || { echo "::error title=secret::Thiếu secret SANDEAL_KEYSTORE_PASS"; exit 1; }
+          step "tải apktool" curl -fsSL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar"
+          step "apktool d" java -jar apktool.jar d -s -f template.apk -o work
+          step "patch" python3 build/patch.py work
+          step "apktool b" java -jar apktool.jar b work -o unsigned.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1); echo "build-tools: $BT"
+          step "zipalign" "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
+          printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 -d > ks.p12 || { echo "::error title=secret::SANDEAL_KEYSTORE_B64 không phải base64 hợp lệ"; exit 1; }
+          step "apksigner sign" "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-pass env:KS_PASS --ks-key-alias sandeal --out SanDeal.apk aligned.apk
+          rm -f ks.p12
+          step "apksigner verify" "$BT/apksigner" verify --print-certs SanDeal.apk
           sha256sum SanDeal.apk template.apk | tee checksums.txt
 
       - name: Đăng Release
