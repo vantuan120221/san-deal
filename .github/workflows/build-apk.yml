@@ -9,6 +9,9 @@ permissions:
 env:
   AUTOX_TAG: v7.2.5
   APKTOOL_VER: 2.12.1
+  # thư viện OCR (Google ML Kit) lấy từ APK AutoX chính thức cùng tag, khóa theo SHA-256
+  AUTOX_APK_URL: https://github.com/aiselp/AutoX/releases/download/v7.2.5/Autox-v7-arm64-v8a-release-v7.2.5.apk
+  AUTOX_APK_SHA256: 7a9b3d4b36776ff7cdf62199248d40a3c7b0f314086c9e948f971a6f1746b16c
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -90,7 +93,10 @@ jobs:
           [ -n "$KS_PASS" ] || { echo "::error title=secret::Thiếu secret SANDEAL_KEYSTORE_PASS"; exit 1; }
           step "tải apktool" curl -fsSL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar"
           step "apktool d" java -jar apktool.jar d -s -f template.apk -o work
-          step "patch" python3 build/patch.py work
+          step "tải AutoX (lấy OCR)" curl -fsSL -o autox.apk "$AUTOX_APK_URL"
+          echo "$AUTOX_APK_SHA256  autox.apk" | sha256sum -c - || { echo "::error title=ocr::SHA-256 APK AutoX không khớp"; exit 1; }
+          step "giải nén OCR" unzip -q -o autox.apk "lib/arm64-v8a/libmlkit_google_ocr_pipeline.so" "assets/mlkit-google-ocr-models/*" -d ocr
+          step "patch" python3 build/patch.py work ocr
           step "apktool b" java -jar apktool.jar b work -o unsigned.apk
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1); echo "build-tools: $BT"
           step "zipalign" "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
