@@ -54,7 +54,9 @@ jobs:
             fi
             tail -5 step.log
           }
-          step sdkmanager --install "ndk;$(jq -r .ndk project-versions.json)"
+          # tag v7.2.5 chưa có khóa "ndk" trong project-versions.json -> dùng bản NDK của workflow tag đó
+          NDK=$(jq -r '.ndk // "26.1.10909125"' project-versions.json)
+          step sdkmanager --install "ndk;$NDK"
           chmod +x ./gradlew
           step ./gradlew autojs:buildJsModule --stacktrace
           step ./gradlew app:buildDocs
