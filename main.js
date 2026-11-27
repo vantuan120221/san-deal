@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.2.0";
+var VERSION = "0.2.1";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -81,8 +81,15 @@ ui.diag.click(function () {
     if (!auto.service) { app.startActivity({ action: "android.settings.ACCESSIBILITY_SETTINGS" }); return; }
     dialogs.rawInput("Tên màn hình? (vd 1, 1-den, 3, 4, 5)", "1", function (label) {
         if (!label) return;
-        toast("Chuyển sang TikTok, 6 giây nữa sẽ đọc màn hình");
-        threads.start(function () { sleep(6000); diagDump(label); });
+        toast("Chuyển sang TikTok — đọc màn hình 3 giây sau khi vào TikTok");
+        threads.start(function () {
+            // chờ tới khi TikTok thật sự ở trên cùng (tối đa 60 giây), rồi đợi màn hình ổn định
+            var t = Date.now();
+            while (!inTikTok() && Date.now() - t < 60000) sleep(200);
+            if (!inTikTok()) { toast("Không thấy TikTok, hủy chẩn đoán"); return; }
+            sleep(3000);
+            diagDump(label);
+        });
     });
 });
 
@@ -112,10 +119,13 @@ function inTikTok() { return TIKTOK.indexOf(String(currentPackage())) >= 0; }
 // Số thứ tự là ô số nhỏ ở góc trái ảnh sản phẩm
 function badges() {
     var out = [];
-    textMatches(/^\d{1,3}$/).find().forEach(function (n) {
+    // số có thể nằm ở text hoặc desc
+    function add(n, v) {
         var b = n.bounds();
-        if (b.left < W * 0.4 && b.top > H * 0.25 && b.height() < H * 0.05) out.push({ n: parseInt(n.text()), top: b.top });
-    });
+        if (b.left < W * 0.4 && b.top > H * 0.25 && b.height() < H * 0.05) out.push({ n: parseInt(v), top: b.top });
+    }
+    textMatches(/^\d{1,3}$/).find().forEach(function (n) { add(n, n.text()); });
+    descMatches(/^\d{1,3}$/).find().forEach(function (n) { add(n, n.desc()); });
     return out.sort(function (a, b) { return a.top - b.top; });
 }
 
