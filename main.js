@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.3.3";
+var VERSION = "0.4.0";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -36,6 +36,7 @@ ui.layout(
             </radiogroup>
             <checkbox id="dry" text="CHẠY THỬ: làm hết nhưng KHÔNG bấm Đặt hàng"/>
             <button id="start" text="BẮT ĐẦU CANH" marginTop="12"/>
+            <button id="fast" text="⚡ CHỈ THANH TOÁN NHANH (tôi tự bấm Mua)"/>
             <button id="diag" text="Chẩn đoán màn hình (gửi qua Telegram cho Claude)"/>
             <text id="perm" textSize="13sp" textColor="#cc0000" marginTop="8"/>
             <text textSize="12sp" textColor="#888888" marginTop="12"
@@ -66,6 +67,22 @@ function getMode() {
     for (var i = 0; i < ids.length; i++) if (ui[ids[i]].checked) return ids[i];
     return "m_any";
 }
+
+// Chế độ nhanh: bạn tự bấm Mua (trên danh sách / trang SP); app lo chọn phân loại, MoMo/COD, Đặt hàng.
+// Có nhập giá tối đa thì chỉ đặt khi Tổng tiền ≤ giá đó.
+ui.fast.click(function () {
+    if (!auto.service) { app.startActivity({ action: "android.settings.ACCESSIBILITY_SETTINGS" }); return; }
+    if (!floaty.checkPermission()) { floaty.requestPermission(); return; }
+    var cfg = {
+        price: parseInt(String(ui.price.getText()).replace(/\D/g, "")) || 0,
+        dry: ui.dry.checked, fast: true
+    };
+    store.put("price", cfg.price ? String(cfg.price) : ""); store.put("dry", cfg.dry);
+    threads.start(function () {
+        try { fastPay(cfg); }
+        catch (e) { status("LỖI: " + e); toast("LỖI: " + e); running = false; }
+    });
+});
 
 ui.start.click(function () {
     if (!auto.service) { app.startActivity({ action: "android.settings.ACCESSIBILITY_SETTINGS" }); return; }
@@ -337,11 +354,23 @@ function fling(up) {
 
 function checkout(cfg) {
     status("Đang chờ trang đặt hàng...");
-    var t = Date.now(), ready = false;
+    var t = Date.now(), ready = false, buyTaps = 0, lastBuy = 0;
     while (running && Date.now() - t < 20000 && !ready) {
-        if (a11y(textMatches(/^(Đặt hàng|Kích hoạt)$/)) || a11y(textStartsWith("Tổng ("))) ready = true;
-        else if (ocrFind(/kich hoat|dat hang|tong \(/, 0, H * 0.82, W, H * 0.18)) ready = true;
-        else sleep(40);
+        if (a11y(textMatches(/^(Đặt hàng|Kích hoạt)$/)) || a11y(textStartsWith("Tổng ("))) { ready = true; break; }
+        var bl0 = ocrRegion(shot(), 0, H * 0.82, W, H * 0.18);
+        if (findLine(bl0, /kich hoat|dat hang|tong \(/)) { ready = true; break; }
+        // bảng chọn phân loại (màu sắc/size): giữ lựa chọn mặc định, bấm "Mua ngay"
+        var mn = findLine(bl0, /mua ngay/);
+        if (mn && Date.now() - lastBuy > 700) {
+            if (buyTaps >= 2) {
+                // bấm 2 lần chưa qua -> có thể chưa chọn phân loại: chọn ô đầu tiên rồi bấm lại
+                var opt = ocrFind(/mau sac|phan loai|kich thuoc|size|loai/, 0, H * 0.3, W, H * 0.4);
+                if (opt) { tapXY(W * 0.18, opt.b + H * 0.1); sleep(200); }
+            }
+            status("Bảng phân loại — bấm Mua ngay");
+            tapLine(mn); buyTaps++; lastBuy = Date.now();
+        }
+        sleep(40);
     }
     if (!ready) return "Không thấy trang đặt hàng sau 20 giây";
     status("Trang đặt hàng (" + (Date.now() - t) + "ms) — tìm MoMo...");
@@ -388,6 +417,15 @@ function checkout(cfg) {
         if (!order && !orderNode) sleep(60);
     }
     if (!order && !orderNode) return "Nút dưới cùng chưa thành 'Đặt hàng' (vẫn PayLater?) — dừng để an toàn";
+    if (cfg.fast && cfg.price > 0) {
+        var tot = 0;
+        ocrRegion(shot(), 0, H * 0.82, W, H * 0.18).forEach(function (ln) {
+            var p = parsePriceText(ln.t); if (p > tot) tot = p;
+        });
+        if (!tot) return "Không đọc được Tổng tiền — không đặt để an toàn";
+        if (tot > cfg.price) return "Tổng " + tot.toLocaleString() + "đ > " + cfg.price.toLocaleString() + "đ — KHÔNG đặt";
+        status("Tổng " + tot.toLocaleString() + "đ ≤ ngưỡng — đặt");
+    }
     if (cfg.dry) return "CHẠY THỬ OK: đã chọn " + payName + ", nút Đặt hàng sẵn sàng (không bấm) — " + (Date.now() - t) + "ms";
 
     status("Bấm Đặt hàng!");
@@ -398,8 +436,7 @@ function checkout(cfg) {
 }
 
 // ---------- vòng canh ----------
-function hunt(cfg) {
-    running = true;
+function openFloat() {
     ui.run(function () {
         fw = floaty.window(
             <vertical bg="#dd000000" padding="8">
@@ -411,6 +448,36 @@ function hunt(cfg) {
         fw.btnStop.click(function () { running = false; });
     });
     sleep(300);
+}
+function finish(result) {
+    if (!result) result = "Đã dừng";
+    status(result);
+    device.vibrate(result.indexOf("MOMO") >= 0 || result.indexOf("OK") >= 0 ? 1500 : 400);
+    running = false;
+    sleep(8000);
+    ui.run(function () { if (fw) { fw.close(); fw = null; } });
+}
+
+function fastPay(cfg) {
+    running = true;
+    openFloat();
+    status("Cho phép chụp màn hình (chọn TOÀN MÀN HÌNH)...");
+    if (!ensureCapture()) return finish("Cần quyền chụp màn hình — đã dừng");
+    status("Sẵn sàng" + (cfg.price ? " (Tổng ≤ " + cfg.price.toLocaleString() + "đ)" : "") +
+           " — bấm Mua trong TikTok, app làm phần còn lại");
+    var result = null;
+    while (running && !result) {
+        if (!inTikTok()) { sleep(200); continue; }
+        var bl = ocrRegion(shot(), 0, H * 0.82, W, H * 0.18);
+        if (findLine(bl, /mua ngay|kich hoat|dat hang|tong \(/)) { result = checkout(cfg); break; }
+        sleep(60);
+    }
+    finish(result);
+}
+
+function hunt(cfg) {
+    running = true;
+    openFloat();
 
     status("Cho phép chụp màn hình (chọn TOÀN MÀN HÌNH)...");
     if (!ensureCapture()) { status("Cần quyền chụp màn hình để đọc danh sách — đã dừng"); running = false; }
@@ -453,12 +520,7 @@ function hunt(cfg) {
         if (s != last) { status(s); last = s; }
         sleep(POLL_MS);
     }
-    if (!result) result = "Đã dừng";
-    status(result);
-    device.vibrate(result.indexOf("MOMO") >= 0 || result.indexOf("OK") >= 0 ? 1500 : 400);
-    running = false;
-    sleep(8000);
-    ui.run(function () { if (fw) { fw.close(); fw = null; } });
+    finish(result);
 }
 
 // ---------- chẩn đoán ----------
