@@ -2,7 +2,8 @@
 // Mỗi lần mở: kiểm tra bản mới trên GitHub, tải main.js nếu có, kiểm SHA-256, rồi chạy.
 // Mất mạng / GitHub lỗi -> chạy bản đã lưu trong máy.
 var BASE = "https://raw.githubusercontent.com/vantuan120221/san-deal/main/";
-var DIR = "/sdcard/SanDeal/";
+// thư mục riêng của app: không cần quyền bộ nhớ
+var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/";
 var MAIN = DIR + "main.js";
 var VER = DIR + "version.txt";
 

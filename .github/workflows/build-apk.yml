@@ -1,0 +1,80 @@
+name: Build SanDeal APK
+# Build khung AutoX TỪ MÃ NGUỒN (tag cố định), ghép loader Săn Deal, ký bằng khóa riêng, đăng Release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['apk-v*']
+permissions:
+  contents: write
+env:
+  AUTOX_TAG: v7.2.5
+  APKTOOL_VER: 2.12.1
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache template AutoX
+        id: tpl
+        uses: actions/cache@v4
+        with:
+          path: template.apk
+          key: autox-template-${{ env.AUTOX_TAG }}
+
+      - name: Lấy mã nguồn AutoX
+        if: steps.tpl.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: aiselp/AutoX
+          ref: ${{ env.AUTOX_TAG }}
+          path: autox
+          submodules: recursive
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - if: steps.tpl.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+      - uses: android-actions/setup-android@v4
+      - name: Build template AutoX từ mã nguồn
+        if: steps.tpl.outputs.cache-hit != 'true'
+        working-directory: autox
+        run: |
+          sdkmanager --install "ndk;$(jq -r .ndk project-versions.json)"
+          chmod +x ./gradlew
+          ./gradlew autojs:buildJsModule
+          ./gradlew app:buildDocs
+          ./gradlew app:buildTemplateApp
+          cp app/src/main/assets/template.apk ../template.apk
+
+      - name: Ghép Săn Deal + ký
+        env:
+          KS_B64: ${{ secrets.SANDEAL_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.SANDEAL_KEYSTORE_PASS }}
+        run: |
+          test -n "$KS_B64" || { echo "Thiếu secret SANDEAL_KEYSTORE_B64"; exit 1; }
+          curl -sL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar"
+          java -jar apktool.jar d -s -f template.apk -o work
+          python3 build/patch.py work
+          java -jar apktool.jar b work -o unsigned.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
+          echo "$KS_B64" | base64 -d > ks.p12
+          "$BT/apksigner" sign --ks ks.p12 --ks-type PKCS12 --ks-pass env:KS_PASS --ks-key-alias sandeal --out SanDeal.apk aligned.apk
+          rm ks.p12
+          "$BT/apksigner" verify --print-certs SanDeal.apk
+          sha256sum SanDeal.apk template.apk | tee checksums.txt
+
+      - name: Đăng Release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('apk-build-{0}', github.run_number) }}
+          name: Săn Deal ${{ github.ref_name }}
+          body: |
+            Tải **SanDeal.apk** và cài. Khung AutoX build từ mã nguồn aiselp/AutoX tag ${{ env.AUTOX_TAG }}.
+          files: |
+            SanDeal.apk
+            checksums.txt

@@ -1,10 +1,10 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
-var DIR = "/sdcard/Download/SanDeal/";
+var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
 var POLL_MS = 80;
 var store = storages.create("san_deal");
 var W = device.width, H = device.height;
@@ -28,7 +28,7 @@ ui.layout(
             <checkbox id="color" text="Kiểm tra màu nút Mua (đỏ/đen) — cần quyền chụp màn hình" marginTop="8"/>
             <checkbox id="dry" text="CHẠY THỬ: làm hết nhưng KHÔNG bấm Đặt hàng"/>
             <button id="start" text="BẮT ĐẦU CANH" marginTop="12"/>
-            <button id="diag" text="Chẩn đoán màn hình (lưu file gửi Claude)"/>
+            <button id="diag" text="Chẩn đoán màn hình (gửi qua Telegram cho Claude)"/>
             <text id="perm" textSize="13sp" textColor="#cc0000" marginTop="8"/>
             <text textSize="12sp" textColor="#888888" marginTop="12"
                 text="Cách dùng: mở live → mở danh sách sản phẩm → quay lại đây nhập số → Bắt đầu → chuyển sang TikTok. Nút nổi DỪNG để dừng."/>
@@ -298,17 +298,24 @@ function diagDump(label) {
     var out = ["label=" + label + " ver=" + VERSION + " pkg=" + currentPackage() + " act=" + currentActivity(),
         "device=" + device.brand + " " + device.model + " android=" + device.release + " screen=" + W + "x" + H,
         "so_node=" + nodes.size() + " doc_ms=" + (t1 - t0) + " badges=" + JSON.stringify(badges()),
-        "depth | class | id | text | desc | bounds | click | enabled | selected | checked | scroll"];
+        "depth|class|id|text|desc|bounds|flags(C=click E=enabled S=selected K=checked R=scroll)"];
     nodes.forEach(function (n) {
+        var t = clean(n.text()), d = clean(n.desc());
+        // chỉ giữ node có chữ, mô tả, bấm được hoặc cuộn được cho file gọn
+        if (!t && !d && !n.clickable() && !n.scrollable()) return;
         var b = n.bounds();
         out.push([n.depth(), clean(n.className()).replace(/^.*\./, ""), clean(n.id()).replace(/^.*:id\//, ""),
-            clean(n.text()), clean(n.desc()), b.left + "," + b.top + "," + b.right + "," + b.bottom,
-            n.clickable() ? "C" : "-", n.enabled() ? "E" : "-", n.selected() ? "S" : "-",
-            n.checked() ? "K" : "-", n.scrollable() ? "R" : "-"].join(" | "));
+            t.substring(0, 80), d.substring(0, 80), b.left + "," + b.top + "," + b.right + "," + b.bottom,
+            (n.clickable() ? "C" : "") + (n.enabled() ? "E" : "") + (n.selected() ? "S" : "") +
+            (n.checked() ? "K" : "") + (n.scrollable() ? "R" : "")].join("|"));
     });
+    var txt = out.join("\n");
     files.ensureDir(DIR);
-    var path = DIR + "diag_" + label + "_" + Date.now() + ".txt";
-    files.write(path, out.join("\n"));
-    toast("Đã lưu " + path);
+    files.write(DIR + "diag_" + label + ".txt", txt);
     device.vibrate(200);
+    // mở bảng chia sẻ -> chọn Telegram gửi cho Claude
+    app.startActivity({
+        action: "android.intent.action.SEND", type: "text/plain",
+        extras: { "android.intent.extra.SUBJECT": "SanDeal diag " + label, "android.intent.extra.TEXT": txt }
+    });
 }
