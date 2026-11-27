@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.2.3";
+var VERSION = "0.2.4";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -95,24 +95,24 @@ ui.diag.click(function () {
     var n = 0;
     dw = floaty.window(
         <vertical bg="#dd1565c0" padding="6">
-            <text id="t" textColor="#ffffff" textSize="12sp" text="Mở TikTok tới màn hình cần đọc rồi bấm ĐỌC" w="200"/>
+            <text id="dtxt" textColor="#ffffff" textSize="12sp" text="Mở TikTok tới màn hình cần đọc rồi bấm ĐỌC" w="200"/>
             <horizontal>
-                <button id="read" text="ĐỌC" w="90" h="44"/>
-                <button id="close" text="ĐÓNG" w="90" h="44"/>
+                <button id="btnRead" text="ĐỌC" w="90" h="44"/>
+                <button id="btnClose" text="ĐÓNG" w="90" h="44"/>
             </horizontal>
         </vertical>
     );
     dw.setPosition(30, Math.round(H * 0.08));
-    dw.read.click(function () {
+    dw.btnRead.click(function () {
         n++;
         var label = "man" + n;
-        dw.t.setText("Đang đọc " + label + "...");
+        dw.dtxt.setText("Đang đọc " + label + "...");
         threads.start(function () {
             var txt = diagDump(label);
-            ui.run(function () { if (dw) dw.t.setText("Đã đọc " + label + " (" + txt.length + " ký tự). Chọn Telegram để gửi."); });
+            ui.run(function () { if (dw) dw.dtxt.setText("Đã đọc " + label + " (" + txt.length + " ký tự). Chọn Telegram để gửi."); });
         });
     });
-    dw.close.click(function () { dw.close(); dw = null; });
+    dw.btnClose.click(function () { dw.close(); dw = null; });
     toast("Mở TikTok rồi bấm nút ĐỌC màu xanh");
 });
 
@@ -121,7 +121,7 @@ var running = false, fw = null;
 
 function status(s) {
     log(s);
-    if (fw) ui.run(function () { fw.st.setText(s); });
+    if (fw) ui.run(function () { fw.ftxt.setText(s); });
 }
 function clean(s) { return s ? String(s).replace(/[\r\n\t]+/g, " ") : ""; }
 function waitFor(fn, ms) {
@@ -274,12 +274,12 @@ function hunt(cfg) {
     ui.run(function () {
         fw = floaty.window(
             <vertical bg="#dd000000" padding="8">
-                <text id="st" textColor="#ffffff" textSize="13sp" text="Săn Deal..." w="220"/>
-                <button id="stop" text="DỪNG" w="100" h="44"/>
+                <text id="ftxt" textColor="#ffffff" textSize="13sp" text="Săn Deal..." w="220"/>
+                <button id="btnStop" text="DỪNG" w="100" h="44"/>
             </vertical>
         );
         fw.setPosition(30, Math.round(H * 0.12));
-        fw.stop.click(function () { running = false; });
+        fw.btnStop.click(function () { running = false; });
     });
     sleep(300);
 
