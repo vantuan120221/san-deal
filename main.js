@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.3.2";
+var VERSION = "0.3.3";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -325,41 +325,73 @@ function waitLines(re, ms) {
     return null;
 }
 
+// thử Trợ năng trước (nhanh, nếu trang đặt hàng cho đọc), không được thì đọc bằng ảnh
+function a11y(sel) { try { return sel.findOnce(); } catch (e) { return null; } }
+function ocrFind(re, x, y, w, h) { return findLine(ocrRegion(shot(), x, y, w, h), re); }
+function tapLine(ln) { tapXY((ln.l + ln.r) / 2, (ln.top + ln.b) / 2); }
+function fling(up) {
+    // vuốt nhanh để trang trôi xuống cuối (phần thanh toán nằm cuối trang)
+    if (up) swipe(W * 0.5, H * 0.8, W * 0.5, H * 0.2, 120);
+    else swipe(W * 0.5, H * 0.3, W * 0.5, H * 0.85, 120);
+}
+
 function checkout(cfg) {
     status("Đang chờ trang đặt hàng...");
-    if (!waitLines(/^tong \(|kich hoat|dat hang/, 20000)) return "Không thấy trang đặt hàng sau 20 giây";
-
-    // tìm MoMo, cuộn xuống nếu cần; không có thì COD
-    var pay = null, payName = "MoMo";
-    for (var k = 0; k < 8 && running && !pay; k++) {
-        var ls = screenLines();
-        pay = findLine(ls, /momo/);
-        if (!pay) { swipe(W * 0.5, H * 0.75, W * 0.5, H * 0.4, 200); sleep(250); }
+    var t = Date.now(), ready = false;
+    while (running && Date.now() - t < 20000 && !ready) {
+        if (a11y(textMatches(/^(Đặt hàng|Kích hoạt)$/)) || a11y(textStartsWith("Tổng ("))) ready = true;
+        else if (ocrFind(/kich hoat|dat hang|tong \(/, 0, H * 0.82, W, H * 0.18)) ready = true;
+        else sleep(40);
     }
-    if (!pay) {
-        var ls2 = screenLines();
-        pay = findLine(ls2, /thanh toan khi giao/); payName = "COD";
-    }
-    if (!pay) return "Không tìm thấy MoMo hay COD";
-    status("Chọn " + payName);
-    tapXY(W * 0.92, (pay.top + pay.b) / 2); // bấm ô tròn bên phải
+    if (!ready) return "Không thấy trang đặt hàng sau 20 giây";
+    status("Trang đặt hàng (" + (Date.now() - t) + "ms) — tìm MoMo...");
 
-    // hộp thoại "Bạn sẽ mất ưu đãi" -> Thay đổi phương thức thanh toán
-    var dlg = waitLines(/thay doi phuong thuc/, 2500);
-    if (dlg) { tapXY((dlg.hit.l + dlg.hit.r) / 2, (dlg.hit.top + dlg.hit.b) / 2); sleep(300); }
-
-    // nút dưới cùng phải ghi "Đặt hàng"; tuyệt đối không bấm "Kích hoạt"
-    var t = Date.now(), order = null;
-    while (running && Date.now() - t < 6000 && !order) {
-        var bl = ocrRegion(shot(), 0, H * 0.86, W, H * 0.14);
-        if (!findLine(bl, /kich hoat/)) order = findLine(bl, /dat hang/);
-        if (!order) sleep(100);
+    // 1) chọn MoMo, không có thì COD
+    var payName = "", tries = 0;
+    while (running && !payName && tries < 6) {
+        tries++;
+        var n = a11y(textContains("MoMo"));
+        if (n) { tap(n); payName = "MoMo"; break; }
+        var ln = ocrFind(/momo/, 0, H * 0.12, W * 0.75, H * 0.72);
+        if (ln) { tapXY(W * 0.92, (ln.top + ln.b) / 2); payName = "MoMo"; break; }
+        if (tries >= 3) {
+            var c = a11y(textContains("Thanh toán khi giao"));
+            if (c) { tap(c); payName = "COD"; break; }
+            var cl = ocrFind(/thanh toan khi giao/, 0, H * 0.12, W * 0.75, H * 0.72);
+            if (cl) { tapXY(W * 0.92, (cl.top + cl.b) / 2); payName = "COD"; break; }
+        }
+        fling(true); fling(true); sleep(450);
     }
-    if (!order) return "Nút dưới cùng chưa thành 'Đặt hàng' (vẫn PayLater?) — dừng để an toàn";
-    if (cfg.dry) return "CHẠY THỬ OK: đã chọn " + payName + ", nút Đặt hàng sẵn sàng (không bấm)";
+    if (!payName) return "Không tìm thấy MoMo hay COD";
+    status("Đã bấm " + payName + " (" + (Date.now() - t) + "ms)");
+
+    // 2) hộp thoại "Bạn sẽ mất ưu đãi" -> Thay đổi phương thức thanh toán
+    var t2 = Date.now();
+    while (running && Date.now() - t2 < 2500) {
+        var d = a11y(textStartsWith("Thay đổi phương thức"));
+        if (d) { tap(d); break; }
+        var dl = ocrFind(/thay doi phuong thuc/, 0, H * 0.4, W, H * 0.45);
+        if (dl) { tapLine(dl); break; }
+        // không có hộp thoại mà nút đã thành Đặt hàng -> khỏi chờ
+        if (a11y(text("Đặt hàng"))) break;
+        sleep(40);
+    }
+
+    // 3) nút dưới cùng phải ghi "Đặt hàng"; tuyệt đối không bấm "Kích hoạt"
+    var t3 = Date.now(), order = null, orderNode = null;
+    while (running && Date.now() - t3 < 6000 && !order && !orderNode) {
+        if (!a11y(text("Kích hoạt"))) orderNode = a11y(text("Đặt hàng"));
+        if (!orderNode) {
+            var bl = ocrRegion(shot(), 0, H * 0.86, W, H * 0.14);
+            if (!findLine(bl, /kich hoat/)) order = findLine(bl, /dat hang/);
+        }
+        if (!order && !orderNode) sleep(60);
+    }
+    if (!order && !orderNode) return "Nút dưới cùng chưa thành 'Đặt hàng' (vẫn PayLater?) — dừng để an toàn";
+    if (cfg.dry) return "CHẠY THỬ OK: đã chọn " + payName + ", nút Đặt hàng sẵn sàng (không bấm) — " + (Date.now() - t) + "ms";
 
     status("Bấm Đặt hàng!");
-    tapXY(W / 2, (order.top + order.b) / 2);
+    if (orderNode) tap(orderNode); else tapXY(W / 2, (order.top + order.b) / 2);
     var gone = waitFor(function () { return String(currentPackage()) == MOMO || !inTikTok(); }, 20000);
     if (gone) return "ĐÃ SANG MOMO — xác nhận thanh toán ngay!";
     return "Đã bấm Đặt hàng nhưng chưa sang MoMo — kiểm tra màn hình";
