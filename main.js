@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.2.2";
+var VERSION = "0.2.3";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -86,20 +86,34 @@ ui.start.click(function () {
     threads.start(function () { hunt(cfg); });
 });
 
+// Chẩn đoán bằng nút nổi: bạn mở TikTok tới đúng màn hình rồi tự bấm "ĐỌC" -> không phải canh giờ
+var dw = null;
 ui.diag.click(function () {
     if (!auto.service) { app.startActivity({ action: "android.settings.ACCESSIBILITY_SETTINGS" }); return; }
-    dialogs.rawInput("Tên màn hình? (vd 1, 1-den, 3, 4, 5)", "1", function (label) {
-        if (!label) return;
-        toast("Chuyển sang TikTok — đọc màn hình 3 giây sau khi vào TikTok");
+    if (!floaty.checkPermission()) { floaty.requestPermission(); return; }
+    if (dw) return;
+    var n = 0;
+    dw = floaty.window(
+        <vertical bg="#dd1565c0" padding="6">
+            <text id="t" textColor="#ffffff" textSize="12sp" text="Mở TikTok tới màn hình cần đọc rồi bấm ĐỌC" w="200"/>
+            <horizontal>
+                <button id="read" text="ĐỌC" w="90" h="44"/>
+                <button id="close" text="ĐÓNG" w="90" h="44"/>
+            </horizontal>
+        </vertical>
+    );
+    dw.setPosition(30, Math.round(H * 0.08));
+    dw.read.click(function () {
+        n++;
+        var label = "man" + n;
+        dw.t.setText("Đang đọc " + label + "...");
         threads.start(function () {
-            // chờ tới khi TikTok thật sự ở trên cùng (tối đa 60 giây), rồi đợi màn hình ổn định
-            var t = Date.now();
-            while (!inTikTok() && Date.now() - t < 60000) sleep(200);
-            if (!inTikTok()) { toast("Không thấy TikTok, hủy chẩn đoán"); return; }
-            sleep(3000);
-            diagDump(label);
+            var txt = diagDump(label);
+            ui.run(function () { if (dw) dw.t.setText("Đã đọc " + label + " (" + txt.length + " ký tự). Chọn Telegram để gửi."); });
         });
     });
+    dw.close.click(function () { dw.close(); dw = null; });
+    toast("Mở TikTok rồi bấm nút ĐỌC màu xanh");
 });
 
 // ---------- tiện ích ----------
@@ -321,32 +335,42 @@ function diagWindows() {
     } catch (e) { return "lỗi " + e; }
 }
 
+function dumpNode(n, depth, out) {
+    if (!n || out.length > 4000) return;
+    var r = new android.graphics.Rect(); n.getBoundsInScreen(r);
+    var t = clean(n.getText()), d = clean(n.getContentDescription());
+    if (t || d || n.isClickable() || n.isScrollable()) {
+        out.push([depth, clean(n.getClassName()).replace(/^.*\./, ""), clean(n.getViewIdResourceName()).replace(/^.*:id\//, ""),
+            t.substring(0, 80), d.substring(0, 80), r.left + "," + r.top + "," + r.right + "," + r.bottom,
+            (n.isClickable() ? "C" : "") + (n.isEnabled() ? "E" : "") + (n.isSelected() ? "S" : "") +
+            (n.isChecked() ? "K" : "") + (n.isScrollable() ? "R" : "")].join("|"));
+    }
+    for (var i = 0; i < n.getChildCount(); i++) dumpNode(n.getChild(i), depth + 1, out);
+}
+
 function diagDump(label) {
-    var t0 = Date.now();
-    var nodes = classNameMatches(/.*/).find();
-    var t1 = Date.now();
-    var out = ["label=" + label + " ver=" + VERSION + " pkg=" + currentPackage() + " act=" + currentActivity(),
+    var out = ["label=" + label + " ver=" + VERSION + " pkg=" + currentPackage(),
         "device=" + device.brand + " " + device.model + " android=" + device.release + " screen=" + W + "x" + H,
-        "so_node=" + nodes.size() + " doc_ms=" + (t1 - t0) + " badges=" + JSON.stringify(badges()),
-        "windows=" + diagWindows(),
+        "badges=" + JSON.stringify(badges()), "windows=" + diagWindows(),
         "depth|class|id|text|desc|bounds|flags(C=click E=enabled S=selected K=checked R=scroll)"];
-    nodes.forEach(function (n) {
-        var t = clean(n.text()), d = clean(n.desc());
-        // chỉ giữ node có chữ, mô tả, bấm được hoặc cuộn được cho file gọn
-        if (!t && !d && !n.clickable() && !n.scrollable()) return;
-        var b = n.bounds();
-        out.push([n.depth(), clean(n.className()).replace(/^.*\./, ""), clean(n.id()).replace(/^.*:id\//, ""),
-            t.substring(0, 80), d.substring(0, 80), b.left + "," + b.top + "," + b.right + "," + b.bottom,
-            (n.clickable() ? "C" : "") + (n.enabled() ? "E" : "") + (n.selected() ? "S" : "") +
-            (n.checked() ? "K" : "") + (n.scrollable() ? "R" : "")].join("|"));
-    });
+    var t0 = Date.now();
+    try {
+        var ws = auto.service.getWindows();
+        for (var i = 0; i < ws.size(); i++) {
+            var w = ws.get(i), pk = winPkg(w);
+            if (pk == "com.android.systemui" || pk == "com.sec.android.app.launcher") continue;
+            out.push("#### window " + pk + " type" + w.getType());
+            dumpNode(w.getRoot(), 0, out);
+        }
+    } catch (e) { out.push("lỗi đọc: " + e); }
+    out.splice(2, 0, "doc_ms=" + (Date.now() - t0) + " dong=" + out.length);
     var txt = out.join("\n");
     files.ensureDir(DIR);
     files.write(DIR + "diag_" + label + ".txt", txt);
     device.vibrate(200);
-    // mở bảng chia sẻ -> chọn Telegram gửi cho Claude
     app.startActivity({
         action: "android.intent.action.SEND", type: "text/plain",
         extras: { "android.intent.extra.SUBJECT": "SanDeal diag " + label, "android.intent.extra.TEXT": txt }
     });
+    return txt;
 }
