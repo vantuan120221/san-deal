@@ -1,11 +1,11 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.3.0";
+var VERSION = "0.3.1";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
-var POLL_MS = 80;
+var POLL_MS = 30;
 var store = storages.create("san_deal");
 var W = device.width, H = device.height;
 
@@ -149,7 +149,18 @@ function ensureCapture() {
     if (!capOK) capOK = requestScreenCapture();
     return capOK;
 }
-function shot() { return captureScreen(); }
+function shot() {
+    try { return captureScreen(); }
+    catch (e) {
+        // phiên chụp màn hình bị Android ngắt (vd sau khi chẩn đoán) -> xin lại 1 lần
+        if (/not available|ScreenCapturer/i.test(String(e))) {
+            capOK = false;
+            status("Phiên chụp màn hình đã tắt — bấm cho phép lại (Toàn màn hình)");
+            if (ensureCapture()) { sleep(300); return captureScreen(); }
+        }
+        throw e;
+    }
+}
 
 function ocrBitmap(bmp, ox, oy) {
     if (!_rec) _rec = com.google.mlkit.vision.text.TextRecognition.getClient(
@@ -189,7 +200,7 @@ function tapXY(x, y) { return click(Math.round(x), Math.round(y)); }
 // ---------- danh sách sản phẩm ----------
 // Số thứ tự = ô số nhỏ ở góc trái trên ảnh sản phẩm
 function badges(img) {
-    var lines = ocrRegion(img, 0, H * 0.3, W * 0.3, H * 0.7), out = [];
+    var lines = ocrRegion(img, 0, H * 0.3, W * 0.14, H * 0.7), out = [];
     lines.forEach(function (ln) {
         var t = ln.t.replace(/\s/g, "");
         if (/^\d{1,3}$/.test(t) && ln.l < W * 0.15 && (ln.b - ln.top) < H * 0.04) out.push({ n: parseInt(t), top: ln.top });
@@ -225,11 +236,19 @@ function scrollTo(idx) {
         var vis = r.visible || [];
         var down = !(vis.length && Math.min.apply(null, vis) > idx);
         if (r.top !== undefined) down = true;  // thấy nhưng sát đáy -> kéo lên chút
-        var sc = listScroller();
-        if (sc) { if (down) sc.scrollForward(); else sc.scrollBackward(); }
-        else if (down) swipe(W * 0.5, H * 0.85, W * 0.5, H * 0.6, 250);
-        else swipe(W * 0.5, H * 0.6, W * 0.5, H * 0.85, 250);
-        sleep(500);
+        var sc = listScroller(), pages = 1;
+        if (vis.length >= 2 && r.top === undefined) {
+            // mỗi trang thấy khoảng vis.length món -> nhảy thẳng nhiều trang khi còn xa
+            var gap = down ? idx - Math.max.apply(null, vis) : Math.min.apply(null, vis) - idx;
+            pages = Math.max(1, Math.min(10, Math.floor(gap / vis.length)));
+        }
+        for (var p = 0; p < pages && running; p++) {
+            if (sc) { if (down) sc.scrollForward(); else sc.scrollBackward(); }
+            else if (down) swipe(W * 0.5, H * 0.85, W * 0.5, H * 0.45, 200);
+            else swipe(W * 0.5, H * 0.45, W * 0.5, H * 0.85, 200);
+            sleep(pages > 1 ? 180 : 0);
+        }
+        sleep(350);
     }
     return null;
 }
@@ -256,7 +275,7 @@ function parsePriceText(t) {
 }
 function readPrice(img, row) {
     var ps = [];
-    ocrRegion(img, W * 0.28, row.top, W * 0.4, row.bottom - row.top).forEach(function (ln) {
+    ocrRegion(img, W * 0.28, row.top + (row.bottom - row.top) * 0.45, W * 0.32, (row.bottom - row.top) * 0.55).forEach(function (ln) {
         var p = parsePriceText(ln.t);
         if (p >= 1000) ps.push(p);
     });
@@ -347,10 +366,14 @@ function hunt(cfg) {
     while (running) {
         if (!inTikTok()) { status("Đang ngoài TikTok, chờ..."); sleep(300); continue; }
         if (!row) {
+            var ts = Date.now();
+            status("Đang tìm #" + cfg.idx + "...");
             row = scrollTo(cfg.idx);
+            if (row) log("tìm #" + cfg.idx + " mất " + (Date.now() - ts) + "ms");
             if (!row) { status("Không tìm thấy #" + cfg.idx + " — mở danh sách sản phẩm"); sleep(500); continue; }
             if (cfg.mode != "m_btn") price = readPrice(shot(), row);
         }
+        var tl = Date.now();
         var img = shot();
         var st = readButton(img, row);
         // cứ ~15 vòng kiểm tra lại vị trí hàng (danh sách có thể xê dịch) + đọc lại giá
@@ -369,6 +392,7 @@ function hunt(cfg) {
         }
         n++;
         var s = "#" + cfg.idx + " | " + (price ? price.toLocaleString() + "đ" : "giá ?") +
+                " | " + (Date.now() - tl) + "ms/vòng" +
                 " | nút " + (st.has ? (st.lit ? "SÁNG" : "đen") : "?") +
                 " | " + Math.round(n * 1000 / (Date.now() - t0)) + " lần/giây";
         if (s != last) { status(s); last = s; }
