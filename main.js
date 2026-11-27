@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.4.1";
+var VERSION = "0.4.2";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -312,7 +312,10 @@ function readButton(img, row) {
 }
 
 function parsePriceText(t) {
-    var m = String(t).replace(/\s/g, "").match(/(\d{1,3}(?:[.,]\d{3})+)/);
+    // OCR hay nhầm 0->O/o, 1->l/I; số tiền dạng 807.700 / 807,700 / 807700
+    var s = String(t).replace(/\s/g, "").replace(/(\d)[Oo]/g, "$10").replace(/[Oo](\d)/g, "0$1")
+        .replace(/(\d)[lI|]/g, "$11").replace(/[lI|](\d)/g, "1$1");
+    var m = s.match(/(\d{1,3}(?:[.,]\d{3})+)/) || s.match(/(\d{4,9})/);
     return m ? parseInt(m[1].replace(/\D/g, "")) : 0;
 }
 function readPrice(img, row) {
@@ -420,11 +423,18 @@ function checkout(cfg) {
     }
     if (!order && !orderNode) return "Nút dưới cùng chưa thành 'Đặt hàng' (vẫn PayLater?) — dừng để an toàn";
     if (cfg.fast && cfg.price > 0) {
-        var tot = 0;
-        ocrRegion(shot(), 0, H * 0.82, W, H * 0.18).forEach(function (ln) {
-            var p = parsePriceText(ln.t); if (p > tot) tot = p;
-        });
-        if (!tot) return "Không đọc được Tổng tiền — không đặt để an toàn";
+        var tot = 0, seen = [];
+        // Tổng nằm ngay trên nút Đặt hàng, bên phải
+        for (var k = 0; k < 3 && !tot; k++) {
+            seen = [];
+            ocrRegion(shot(), W * 0.4, H * 0.78, W * 0.6, H * 0.14).forEach(function (ln) {
+                seen.push(ln.t);
+                if (/%|tiet|kiem|thang/i.test(plain(ln.t))) return;   // bỏ "Tiết kiệm 75%"
+                var p = parsePriceText(ln.t); if (p >= 1000 && p > tot) tot = p;
+            });
+            if (!tot) sleep(150);
+        }
+        if (!tot) return "Không đọc được Tổng tiền — không đặt. Đọc thấy: " + seen.join(" / ");
         if (tot > cfg.price) return "Tổng " + tot.toLocaleString() + "đ > " + cfg.price.toLocaleString() + "đ — KHÔNG đặt";
         status("Tổng " + tot.toLocaleString() + "đ ≤ ngưỡng — đặt");
     }
