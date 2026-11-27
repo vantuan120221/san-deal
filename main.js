@@ -1,13 +1,22 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.2.1";
+var VERSION = "0.2.2";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
 var POLL_MS = 80;
 var store = storages.create("san_deal");
 var W = device.width, H = device.height;
+
+// Chỉ tìm trong cửa sổ TikTok: mặc định AutoX đọc "cửa sổ đang hoạt động", trên Android 17
+// cửa sổ đó có thể là app Săn Deal / nút nổi thay vì TikTok.
+function winPkg(w) {
+    try { var r = w.getRoot(); return r ? String(r.getPackageName()) : ""; } catch (e) { return ""; }
+}
+try {
+    auto.setWindowFilter(function (w) { return TIKTOK.indexOf(winPkg(w)) >= 0; });
+} catch (e) { log("setWindowFilter lỗi: " + e); }
 
 ui.layout(
     <scroll>
@@ -301,6 +310,17 @@ function hunt(cfg) {
 }
 
 // ---------- chẩn đoán ----------
+function diagWindows() {
+    try {
+        var ws = auto.service.getWindows(), out = [];
+        for (var i = 0; i < ws.size(); i++) {
+            var w = ws.get(i);
+            out.push(winPkg(w) + "(type" + w.getType() + (w.isActive() ? ",active" : "") + ")");
+        }
+        return out.join(" ");
+    } catch (e) { return "lỗi " + e; }
+}
+
 function diagDump(label) {
     var t0 = Date.now();
     var nodes = classNameMatches(/.*/).find();
@@ -308,6 +328,7 @@ function diagDump(label) {
     var out = ["label=" + label + " ver=" + VERSION + " pkg=" + currentPackage() + " act=" + currentActivity(),
         "device=" + device.brand + " " + device.model + " android=" + device.release + " screen=" + W + "x" + H,
         "so_node=" + nodes.size() + " doc_ms=" + (t1 - t0) + " badges=" + JSON.stringify(badges()),
+        "windows=" + diagWindows(),
         "depth|class|id|text|desc|bounds|flags(C=click E=enabled S=selected K=checked R=scroll)"];
     nodes.forEach(function (n) {
         var t = clean(n.text()), d = clean(n.desc());
