@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.3.1";
+var VERSION = "0.3.2";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -200,7 +200,7 @@ function tapXY(x, y) { return click(Math.round(x), Math.round(y)); }
 // ---------- danh sách sản phẩm ----------
 // Số thứ tự = ô số nhỏ ở góc trái trên ảnh sản phẩm
 function badges(img) {
-    var lines = ocrRegion(img, 0, H * 0.3, W * 0.14, H * 0.7), out = [];
+    var lines = ocrRegion(img, 0, H * 0.3, W * 0.3, H * 0.7), out = [];
     lines.forEach(function (ln) {
         var t = ln.t.replace(/\s/g, "");
         if (/^\d{1,3}$/.test(t) && ln.l < W * 0.15 && (ln.b - ln.top) < H * 0.04) out.push({ n: parseInt(t), top: ln.top });
@@ -229,26 +229,49 @@ function listScroller() {
     return best;
 }
 
+// kéo danh sách một đoạn dy pixel (dy>0: xem phía dưới), giữ tay ở cuối để không trôi quán tính
+function nudge(dy) {
+    var x = Math.round(W * 0.5);
+    var y1 = Math.round(dy > 0 ? H * 0.9 : H * 0.55);
+    var y2 = Math.round(Math.max(H * 0.5, Math.min(H * 0.95, y1 - dy)));
+    gesture(700, [x, y1], [x, Math.round((y1 + y2) / 2)], [x, y2], [x, y2], [x, y2]);
+}
+
+var LIST_TOP = 0.45; // dưới phần đầu bảng sản phẩm
+
 function scrollTo(idx) {
+    var lastDir = 0, flips = 0;
     for (var k = 0; k < 40 && running; k++) {
         var r = findRow(shot(), idx);
-        if (r.top !== undefined && r.bottom < H * 0.97) return r;
+        if (r.top !== undefined) {
+            // thấy rồi: đủ cả hàng trên màn hình thì dừng, không thì kéo nhẹ cho lọt vào
+            if (r.bottom <= H * 0.97 && r.top >= H * LIST_TOP) return r;
+            if (r.bottom > H * 0.97) nudge(r.bottom - H * 0.8);
+            else nudge(-(H * 0.6 - r.top));
+            sleep(400);
+            // kéo nhẹ 3 lần vẫn chưa gọn mà hàng vẫn thấy được nút -> chấp nhận
+            if (++flips >= 3 && r.bottom <= H - 5) return r;
+            continue;
+        }
         var vis = r.visible || [];
         var down = !(vis.length && Math.min.apply(null, vis) > idx);
-        if (r.top !== undefined) down = true;  // thấy nhưng sát đáy -> kéo lên chút
-        var sc = listScroller(), pages = 1;
-        if (vis.length >= 2 && r.top === undefined) {
-            // mỗi trang thấy khoảng vis.length món -> nhảy thẳng nhiều trang khi còn xa
-            var gap = down ? idx - Math.max.apply(null, vis) : Math.min.apply(null, vis) - idx;
-            pages = Math.max(1, Math.min(10, Math.floor(gap / vis.length)));
+        var gap = vis.length ? (down ? idx - Math.max.apply(null, vis) : Math.min.apply(null, vis) - idx) : 99;
+        var dir = down ? 1 : -1;
+        if (lastDir && dir != lastDir) flips++;
+        lastDir = dir;
+        if (gap <= 2 || flips >= 2) {
+            // gần rồi (hoặc đang qua lại): kéo từng đoạn nhỏ
+            nudge(dir * H * 0.25);
+        } else {
+            var sc = listScroller();
+            var pages = vis.length >= 2 ? Math.max(1, Math.min(10, Math.floor(gap / vis.length))) : 1;
+            for (var p = 0; p < pages && running; p++) {
+                if (sc) { if (down) sc.scrollForward(); else sc.scrollBackward(); }
+                else nudge(dir * H * 0.35);
+                sleep(pages > 1 ? 180 : 0);
+            }
         }
-        for (var p = 0; p < pages && running; p++) {
-            if (sc) { if (down) sc.scrollForward(); else sc.scrollBackward(); }
-            else if (down) swipe(W * 0.5, H * 0.85, W * 0.5, H * 0.45, 200);
-            else swipe(W * 0.5, H * 0.45, W * 0.5, H * 0.85, 200);
-            sleep(pages > 1 ? 180 : 0);
-        }
-        sleep(350);
+        sleep(400);
     }
     return null;
 }
