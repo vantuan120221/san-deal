@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.4.0";
+var VERSION = "0.4.1";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -259,10 +259,12 @@ var LIST_TOP = 0.45; // dưới phần đầu bảng sản phẩm
 function scrollTo(idx) {
     var lastDir = 0, flips = 0;
     for (var k = 0; k < 40 && running; k++) {
-        var r = findRow(shot(), idx);
+        var img = shot(), r = findRow(img, idx);
         if (r.top !== undefined) {
-            // thấy rồi: đủ cả hàng trên màn hình thì dừng, không thì kéo nhẹ cho lọt vào
+            // thấy rồi: đủ cả hàng, hoặc đã thấy nút Mua của hàng đó -> dừng luôn, khỏi kéo
             if (r.bottom <= H * 0.97 && r.top >= H * LIST_TOP) return r;
+            var rb = { top: Math.max(r.top, Math.round(H * LIST_TOP)), bottom: Math.min(r.bottom, H - 5) };
+            if (rb.bottom - rb.top > H * 0.05 && readButton(img, rb).has) return rb;
             if (r.bottom > H * 0.97) nudge(r.bottom - H * 0.8);
             else nudge(-(H * 0.6 - r.top));
             sleep(400);
