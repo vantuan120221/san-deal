@@ -43,11 +43,22 @@ jobs:
         if: steps.tpl.outputs.cache-hit != 'true'
         working-directory: autox
         run: |
-          sdkmanager --install "ndk;$(jq -r .ndk project-versions.json)"
+          # lỗi thì đẩy 80 dòng cuối log ra annotation (xem được không cần đăng nhập)
+          step() {
+            echo "== $*"
+            if ! "$@" > step.log 2>&1; then
+              tail -80 step.log
+              msg=$(tail -80 step.log | python3 -c 'import sys;print(sys.stdin.read()[-3500:].replace("%","%25").replace("\r","").replace("\n","%0A"))')
+              echo "::error title=$*::$msg"
+              exit 1
+            fi
+            tail -5 step.log
+          }
+          step sdkmanager --install "ndk;$(jq -r .ndk project-versions.json)"
           chmod +x ./gradlew
-          ./gradlew autojs:buildJsModule
-          ./gradlew app:buildDocs
-          ./gradlew app:buildTemplateApp
+          step ./gradlew autojs:buildJsModule --stacktrace
+          step ./gradlew app:buildDocs
+          step ./gradlew app:buildTemplateApp --stacktrace
           cp app/src/main/assets/template.apk ../template.apk
 
       - name: Ghép Săn Deal + ký
@@ -57,9 +68,11 @@ jobs:
         run: |
           test -n "$KS_B64" || { echo "Thiếu secret SANDEAL_KEYSTORE_B64"; exit 1; }
           curl -sL -o apktool.jar "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar"
-          java -jar apktool.jar d -s -f template.apk -o work
-          python3 build/patch.py work
-          java -jar apktool.jar b work -o unsigned.apk
+          err() { msg=$(tail -60 "$1" | python3 -c 'import sys;print(sys.stdin.read()[-3500:].replace("%","%25").replace("\r","").replace("\n","%0A"))'); echo "::error title=$2::$msg"; exit 1; }
+          java -jar apktool.jar d -s -f template.apk -o work > a.log 2>&1 || err a.log "apktool d"
+          python3 build/patch.py work > p.log 2>&1 || err p.log "patch"
+          cat p.log
+          java -jar apktool.jar b work -o unsigned.apk > b.log 2>&1 || err b.log "apktool b"
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
           echo "$KS_B64" | base64 -d > ks.p12
