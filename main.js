@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.4.2";
+var VERSION = "0.5.0";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -151,6 +151,7 @@ function waitFor(fn, ms) {
     return null;
 }
 function tap(n) {
+    if (!running) return false;
     // bấm node: ưu tiên chính nó/cha có thể bấm, không được thì bấm theo tọa độ
     var p = n, k = 0;
     while (p && k < 5) { if (p.clickable() && p.click()) return true; p = p.parent(); k++; }
@@ -212,7 +213,7 @@ function findLine(lines, re) {
     for (var i = 0; i < lines.length; i++) if (re.test(plain(lines[i].t))) return lines[i];
     return null;
 }
-function tapXY(x, y) { return click(Math.round(x), Math.round(y)); }
+function tapXY(x, y) { if (!running) return false; return click(Math.round(x), Math.round(y)); }
 
 // ---------- danh sách sản phẩm ----------
 // Số thứ tự = ô số nhỏ ở góc trái trên ảnh sản phẩm
@@ -256,9 +257,16 @@ function nudge(dy) {
 
 var LIST_TOP = 0.45; // dưới phần đầu bảng sản phẩm
 
+// chỉ coi là đang ở danh sách sản phẩm khi bảng trượt dưới cùng đang mở
+function listOpen() {
+    return !!(a11y(descContains("Trang tính dưới cùng")) || a11y(descContains("Bottom sheet")) ||
+              a11y(descContains("bottom sheet")));
+}
+
 function scrollTo(idx) {
     var lastDir = 0, flips = 0;
     for (var k = 0; k < 40 && running; k++) {
+        if (!listOpen()) return null;
         var img = shot(), r = findRow(img, idx);
         if (r.top !== undefined) {
             // thấy rồi: đủ cả hàng, hoặc đã thấy nút Mua của hàng đó -> dừng luôn, khỏi kéo
@@ -273,6 +281,7 @@ function scrollTo(idx) {
             continue;
         }
         var vis = r.visible || [];
+        if (!vis.length) return null;   // không thấy ô số nào -> chưa phải danh sách, không cuộn bừa
         var down = !(vis.length && Math.min.apply(null, vis) > idx);
         var gap = vis.length ? (down ? idx - Math.max.apply(null, vis) : Math.min.apply(null, vis) - idx) : 99;
         var dir = down ? 1 : -1;
@@ -453,14 +462,29 @@ function openFloat() {
         fw = floaty.window(
             <vertical bg="#dd000000" padding="8">
                 <text id="ftxt" textColor="#ffffff" textSize="13sp" text="Săn Deal..." w="220"/>
-                <button id="btnStop" text="DỪNG" w="100" h="44"/>
+                <button id="btnStop" text="■ DỪNG KHẨN CẤP" w="220" h="64" textSize="16sp" textColor="#ffffff" bg="#d32f2f"/>
+                <text textColor="#ffcccc" textSize="11sp" text="hoặc bấm nút GIẢM ÂM LƯỢNG" w="220"/>
             </vertical>
         );
         fw.setPosition(30, Math.round(H * 0.12));
-        fw.btnStop.click(function () { running = false; });
+        fw.btnStop.click(function () { emergencyStop(); });
     });
     sleep(300);
 }
+
+function emergencyStop() {
+    if (!running) return;
+    running = false;
+    toast("ĐÃ DỪNG KHẨN CẤP");
+    device.vibrate(600);
+    if (fw) ui.run(function () { if (fw) fw.ftxt.setText("ĐÃ DỪNG KHẨN CẤP"); });
+}
+
+// phím giảm âm lượng = dừng khẩn cấp (Trợ năng nhận phím cứng)
+try {
+    events.observeKey();
+    events.onKeyDown("volume_down", function () { emergencyStop(); });
+} catch (e) { log("không bắt được phím âm lượng: " + e); }
 function finish(result) {
     if (!result) result = "Đã dừng";
     status(result);
@@ -499,12 +523,16 @@ function hunt(cfg) {
     var row = null, last = "", t0 = Date.now(), n = 0, result = null, price = 0, miss = 0;
     while (running) {
         if (!inTikTok()) { status("Đang ngoài TikTok, chờ..."); sleep(300); continue; }
+        if (!listOpen()) {
+            status("Mở DANH SÁCH SẢN PHẨM (bấm giỏ hàng trong live) — chưa tìm");
+            row = null; sleep(300); continue;
+        }
         if (!row) {
             var ts = Date.now();
             status("Đang tìm #" + cfg.idx + "...");
             row = scrollTo(cfg.idx);
             if (row) log("tìm #" + cfg.idx + " mất " + (Date.now() - ts) + "ms");
-            if (!row) { status("Không tìm thấy #" + cfg.idx + " — mở danh sách sản phẩm"); sleep(500); continue; }
+            if (!row) { status("Chưa thấy #" + cfg.idx + " — kiểm tra đang ở danh sách sản phẩm"); sleep(500); continue; }
             if (cfg.mode != "m_btn") price = readPrice(shot(), row);
         }
         var tl = Date.now();
