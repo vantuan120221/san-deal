@@ -1,7 +1,7 @@
 "ui";
 // Săn Deal — canh 1 sản phẩm trong danh sách live TikTok Shop, đủ điều kiện thì mua.
 // Chỉ thao tác giao diện như người bấm. Dừng khi đã sang app MoMo (người dùng tự xác nhận).
-var VERSION = "0.5.0";
+var VERSION = "0.5.1";
 var TIKTOK = ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"];
 var MOMO = "com.mservice.momotransfer";
 var DIR = context.getFilesDir().getAbsolutePath() + "/sandeal/diag/";
@@ -228,16 +228,32 @@ function badges(img) {
 
 function findRow(img, idx) {
     var bs = badges(img);
+    // chiều cao 1 hàng = khoảng cách giữa 2 số liên tiếp (mặc định ~0.149 màn hình)
+    var rowH = Math.round(H * 0.149);
+    for (var k = 0; k + 1 < bs.length; k++) {
+        if (bs[k + 1].n == bs[k].n + 1) { rowH = bs[k + 1].top - bs[k].top; break; }
+    }
+    var pad = Math.round(H * 0.012);
     for (var i = 0; i < bs.length; i++) {
         if (bs[i].n == idx) {
-            var top = bs[i].top - Math.round(H * 0.012);
-            var bottom = (i + 1 < bs.length) ? bs[i + 1].top - Math.round(H * 0.015) : top + Math.round(H * 0.145);
+            var top = bs[i].top - pad;
+            var bottom = (i + 1 < bs.length) ? bs[i + 1].top - Math.round(H * 0.015) : top + rowH - pad;
             return { top: top, bottom: Math.min(bottom, H - 5) };
+        }
+    }
+    // món "Đặc sắc" (đang ghim) không hiện số -> suy ra từ số liền sau hoặc liền trước
+    for (var j = 0; j < bs.length; j++) {
+        if (bs[j].n == idx + 1) {
+            var t1 = bs[j].top - rowH - pad;
+            if (t1 >= H * LIST_TOP - pad * 3) return { top: Math.max(t1, Math.round(H * LIST_TOP)), bottom: bs[j].top - Math.round(H * 0.015), guessed: true };
+        }
+        if (bs[j].n == idx - 1) {
+            var t2 = bs[j].top + rowH - pad;
+            if (t2 + rowH * 0.6 <= H) return { top: t2, bottom: Math.min(t2 + rowH - pad, H - 5), guessed: true };
         }
     }
     return { visible: bs.map(function (x) { return x.n; }) };
 }
-
 function listScroller() {
     var best = null;
     scrollable(true).find().forEach(function (n) {
@@ -306,17 +322,23 @@ function scrollTo(idx) {
 
 function isRedPx(c) { return colors.red(c) > 200 && colors.green(c) < 100 && colors.blue(c) < 140; }
 function isDarkPx(c) { return colors.red(c) < 90 && colors.green(c) < 90 && colors.blue(c) < 90; }
+// nút hết suất xám nhạt (#e0e0e0...), khác nền trắng 255
+function isGreyPx(c) {
+    var r = colors.red(c), g = colors.green(c), b = colors.blue(c);
+    return r > 195 && r < 245 && Math.abs(r - g) < 12 && Math.abs(g - b) < 12;
+}
 
-// nút Mua nằm cột phải của hàng: đỏ = mua được, đen/xám = hết suất
+// nút Mua nằm cột phải của hàng: đỏ = mua được, xám nhạt/đen = hết suất
 function readButton(img, row) {
-    var x = Math.round(W * 0.86), red = [], dark = [];
+    var x = Math.round(W * 0.86), red = [], dark = [], grey = [];
     for (var y = row.top; y < row.bottom; y += 6) {
         var c = images.pixel(img, x, y);
-        if (isRedPx(c)) red.push(y); else if (isDarkPx(c)) dark.push(y);
+        if (isRedPx(c)) red.push(y); else if (isGreyPx(c)) grey.push(y); else if (isDarkPx(c)) dark.push(y);
     }
     var mid = function (a) { return a[Math.floor(a.length / 2)]; };
     if (red.length >= 4) return { has: true, lit: true, x: x, y: mid(red) };
-    if (dark.length >= 4) return { has: true, lit: false, x: x, y: mid(dark) };
+    if (grey.length >= 6) return { has: true, lit: false, x: x, y: mid(grey) };
+    if (dark.length >= 8) return { has: true, lit: false, x: x, y: mid(dark) };  // nút đen đặc, chữ tiêu đề không đủ dày
     return { has: false, lit: false };
 }
 
